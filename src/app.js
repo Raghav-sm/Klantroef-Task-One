@@ -7,7 +7,8 @@ import { fileURLToPath } from 'url';
 
 import authRoutes from './routes/auth.route.js';
 import mediaRoutes from './routes/media.route.js';
-
+import { generalLimiter, authLimiter } from './middleware/rateLimiter.js';
+import { requestLogger,errorLogger } from './middleware/logger.js';
 dotenv.config();
 
 
@@ -20,6 +21,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(requestLogger);
+
+// applying rate limiting..
+app.use(generalLimiter);
+app.use('/auth', authLimiter);
 
 // serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -33,6 +39,9 @@ app.use('/media', mediaRoutes);
 app.use('*', (req, res) => {
   res.status(404).json({ error: 'Endpoint not found' });
 });
+
+// error logging
+app.use(errorLogger);
 
 // global error handler
 app.use((err, req, res, next) => {
