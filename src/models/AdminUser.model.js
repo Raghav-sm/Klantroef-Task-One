@@ -20,6 +20,7 @@ const adminUserSchema = new mongoose.Schema({
   }
 });
 
+//so i can use this if want speed but remove unique in email.. based on requirement
 adminUserSchema.index({ email: 1 }); // index because its useful when we having queries to deal with..
 
 export default mongoose.model('AdminUser',adminUserSchema);

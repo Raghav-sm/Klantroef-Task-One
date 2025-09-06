@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import AdminUser from '../models/AdminUser.model';
+import AdminUser from '../models/AdminUser.model.js';
 
 // Generating JWT token
 const generateToken = (userId) => {
