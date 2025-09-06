@@ -1,3 +1,4 @@
+import { mongoose } from 'mongoose';
 import MediaAsset from '../models/MediaAsset.model.js';
 import MediaViewLog from '../models/MediaViewLog.model.js';
 import { generateSignedUrl, validateSignedUrl } from '../utils/security.js';
@@ -83,10 +84,10 @@ export const streamMedia = async (req, res) => {
     // Log the view
     const viewLog = new MediaViewLog({
       media_id: id,
-      viewed_by_ip: req.ip
+      viewed_by_ip: req.clientIP 
     });
     await viewLog.save();
-    const filePath = `uploads/media/${mediaAsset.file_url.split('/').pop()}`;
+    const filePath = mediaAsset.file_url;
     res.setHeader('Content-Type', mediaAsset.type === 'video' ? 'video/mp4' : 'audio/mpeg');
     res.setHeader('Content-Disposition', `inline; filename="${mediaAsset.title}"`);
 
@@ -97,36 +98,120 @@ export const streamMedia = async (req, res) => {
   }
 };
 
-// Get media analytics
+// Get media analytics with time range support
 export const getMediaAnalytics = async (req, res) => {
   try {
     const { id } = req.params;
+    const { range = '30d' } = req.query; 
 
+    // Check if media exists
     const mediaAsset = await MediaAsset.findById(id);
     if (!mediaAsset) {
       return res.status(404).json({ error: 'Media not found' });
     }
 
-    // Get view count and recent views
-    const viewCount = await MediaViewLog.countDocuments({ media_id: id });
-    const recentViews = await MediaViewLog.find({ media_id: id })
-      .sort({ timestamp: -1 })
-      .limit(10);
+    // Calculate date range
+    let startDate = new Date();
+    switch (range) {
+      case '7d':
+        startDate.setDate(startDate.getDate() - 7);
+        break;
+      case '30d':
+        startDate.setDate(startDate.getDate() - 30);
+        break;
+      case '90d':
+        startDate.setDate(startDate.getDate() - 90);
+        break;
+      case 'all':
+        startDate = null; // No date filter
+        break;
+      default:
+        return res.status(400).json({ error: 'Invalid range parameter. Use 7d, 30d, 90d, or all' });
+    }
+
+    // Build match query
+    const matchQuery = { media_id: new mongoose.Types.ObjectId(id) };
+    if (startDate) {
+      matchQuery.timestamp = { $gte: startDate };
+    }
+    // Get total views
+    const totalViews = await MediaViewLog.countDocuments(matchQuery);
+    // Get unique IPs
+    const uniqueIPs = await MediaViewLog.distinct('viewed_by_ip', matchQuery);
+    // Get views per day
+    const viewsPerDay = await MediaViewLog.aggregate([
+      {
+        $match: matchQuery
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: {
+              format: "%Y-%m-%d",
+              date: "$timestamp"
+            }
+          },
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { _id: 1 }
+      }
+    ]);
+
+    // Format views per day
+    const viewsPerDayFormatted = {};
+    viewsPerDay.forEach(day => {
+      viewsPerDayFormatted[day._id] = day.count;
+    });
+    const viewsByCountry = {};
 
     res.json({
-      media: {
-        id: mediaAsset._id,
-        title: mediaAsset.title,
-        type: mediaAsset.type,
-        created_at: mediaAsset.created_at
-      },
-      analytics: {
-        total_views: viewCount,
-        recent_views: recentViews
+      total_views: totalViews,
+      unique_ips: uniqueIPs.length,
+      views_per_day: viewsPerDayFormatted,
+      views_by_country: viewsByCountry,
+      date_range: {
+        start: startDate,
+        end: new Date()
       }
     });
   } catch (error) {
     console.error('Media analytics error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+
+// Log a media view
+export const logView = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if media exists
+    const mediaAsset = await MediaAsset.findById(id);
+    if (!mediaAsset) {
+      return res.status(404).json({ error: 'Media not found' });
+    }
+
+    // Create view log entry
+    const viewLog = new MediaViewLog({
+      media_id: id,
+      viewed_by_ip: req.clientIP 
+    });
+
+    await viewLog.save();
+
+    res.status(200).json({
+      message: 'View logged successfully',
+      view: {
+        media_id: id,
+        viewed_at: viewLog.timestamp,
+        viewed_by_ip: viewLog.viewed_by_ip 
+      }
+    });
+  } catch (error) {
+    console.error('View logging error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
